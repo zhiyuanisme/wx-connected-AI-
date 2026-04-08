@@ -34,6 +34,53 @@ if OPENAI_API_KEY:
 
 # 消息去重缓存
 message_cache = {}
+self_nickname = None
+
+
+def is_message_from_friend(msg, friend_name: str) -> bool:
+    """判断消息是否来自好友而非自己发送
+    
+    Args:
+        msg: 消息对象
+        friend_name: 好友名称
+        
+    Returns:
+        True 表示来自好友，False 表示自己发送的
+    """
+    global self_nickname
+    
+    try:
+        # 方法1: 检查 sender 字段
+        sender = getattr(msg, 'sender', '')
+        
+        # 如果 sender 就是好友名称，说明是来自好友
+        # 如果 sender 是自己，说明是自己发的
+        if sender:
+            if sender == friend_name:
+                return True
+            if self_nickname and sender == self_nickname:
+                return False
+        
+        # 方法2: 通过 attr 字段判断
+        # 'self' 表示自己发送，其他表示来自对方
+        attr = getattr(msg, 'attr', '')
+        if attr == 'self':
+            return False
+        
+        # 方法3: 通过 direction 字段判断
+        # 'right' 表示右对齐（自己），'left' 表示左对齐（对方）
+        direction = getattr(msg, 'direction', '')
+        if direction == 'right':
+            return False
+        elif direction == 'left':
+            return True
+        
+        # 默认认为是来自好友
+        return True
+        
+    except Exception as e:
+        logger.warning(f"判断消息来源时出错: {e}")
+        return False
 
 
 def get_ai_response(prompt: str) -> str:
@@ -108,14 +155,8 @@ def process_friend_messages(wx: WeChat, friend_name: str) -> None:
             if not hasattr(msg, 'content') or not msg.content:
                 continue
             
-            # 检查是否是自己的消息
-            sender = getattr(msg, 'sender', '')
-            attr = getattr(msg, 'attr', '')
-            direction = getattr(msg, 'direction', '')
-            
-            # 判断是否是来自好友的消息（不是自己发送的）
-            is_self = (attr == 'self' or sender == '我' or direction == 'right')
-            if is_self:
+            # 检查是否是来自好友的消息（使用改进的判断方法）
+            if not is_message_from_friend(msg, friend_name):
                 continue
             
             # 获取消息 hash 用于去重
@@ -154,7 +195,17 @@ def process_friend_messages(wx: WeChat, friend_name: str) -> None:
 
 def main() -> None:
     """主程序 - 使用轮询模式兼容 wxauto4 开源版本"""
+    global self_nickname
+    
     wx = WeChat()
+    
+    # 尝试获取当前用户的昵称
+    try:
+        self_nickname = wx.nickname
+        logger.info(f"当前登录用户: {self_nickname}")
+    except Exception as e:
+        logger.warning(f"无法获取当前用户昵称: {e}")
+        # 继续运行，使用其他判断方法
     
     listen_list = [
         name.strip() 

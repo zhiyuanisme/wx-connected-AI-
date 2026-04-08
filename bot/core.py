@@ -46,6 +46,9 @@ class AutoReplyBot:
         # 轮询间隔（秒）
         self.poll_interval = float(os.getenv("POLL_INTERVAL", "2"))
         
+        # 当前用户的昵称（稍后初始化）
+        self.self_nickname = None
+        
         self._init_ai_client()
     
     def _init_ai_client(self):
@@ -116,10 +119,49 @@ class AutoReplyBot:
         except Exception as e:
             return f"【AI 大脑断线】{str(e)}"
     
-    def _update_status(self, message: str):
-        """更新状态"""
-        if self.status_callback:
-            self.status_callback(message)
+    def _is_message_from_friend(self, msg, friend_name: str) -> bool:
+        """判断消息是否来自好友而非自己发送
+        
+        Args:
+            msg: 消息对象
+            friend_name: 好友名称
+            
+        Returns:
+            True 表示来自好友，False 表示自己发送的
+        """
+        try:
+            # 方法1: 检查 sender 字段
+            sender = getattr(msg, 'sender', '')
+            
+            # 如果 sender 就是好友名称，说明是来自好友
+            # 如果 sender 是自己，说明是自己发的
+            if sender:
+                if sender == friend_name:
+                    return True
+                if self.self_nickname and sender == self.self_nickname:
+                    return False
+            
+            # 方法2: 通过 attr 字段判断
+            # 'self' 表示自己发送，其他表示来自对方
+            attr = getattr(msg, 'attr', '')
+            if attr == 'self':
+                return False
+            
+            # 方法3: 通过 direction 字段判断
+            # 'right' 表示右对齐（自己），'left' 表示左对齐（对方）
+            direction = getattr(msg, 'direction', '')
+            if direction == 'right':
+                return False
+            elif direction == 'left':
+                return True
+            
+            # 默认认为是来自好友
+            return True
+            
+        except Exception as e:
+            logger.warning(f"判断消息来源时出错: {e}")
+            return False
+    
     
     def _process_friend_messages(self, friend_name: str):
         """处理某个好友的消息"""
@@ -135,18 +177,12 @@ class AutoReplyBot:
             
             # 倒序遍历，找最新的入站消息
             for msg in reversed(msgs):
-                # 跳过系统消息和时间消息
+                # 跳过没有 content 的消息
                 if not hasattr(msg, 'content') or not msg.content:
                     continue
                 
-                # 检查是否是自己的消息
-                sender = getattr(msg, 'sender', '')
-                attr = getattr(msg, 'attr', '')
-                direction = getattr(msg, 'direction', '')
-                
-                # 判断是否是来自好友的消息（不是自己发送的）
-                is_self = (attr == 'self' or sender == '我' or direction == 'right')
-                if is_self:
+                # 检查是否是来自好友的消息（使用改进的判断方法）
+                if not self._is_message_from_friend(msg, friend_name):
                     continue
                 
                 # 获取消息 hash 用于去重
@@ -201,6 +237,15 @@ class AutoReplyBot:
         try:
             self._update_status("正在初始化 WeChat...")
             self.wx = WeChat()
+            
+            # 尝试获取当前用户的昵称
+            try:
+                self.self_nickname = self.wx.nickname
+                logger.info(f"当前登录用户: {self.self_nickname}")
+            except Exception as e:
+                logger.warning(f"无法获取当前用户昵称: {e}")
+                # 继续运行，使用其他判断方法
+            
             self.running = True
             
             listen_list = self.config.get('listen_friends', [])
