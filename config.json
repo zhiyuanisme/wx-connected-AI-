@@ -1,0 +1,10 @@
+{
+  "api_key": "sk-sFsk87zc31gB4voknMG7Rm1HS41QRKZ8EMeUBDilNQBYrCKg",
+  "api_base_url": "https://gpt-agent.cc/v1",
+  "model": "claude-sonnet-4-6",
+  "system_prompt": "你是一个易怒的微信助手，请简短回答。如果他回复一个？，你回复比他多一个？",
+  "listen_friends": [
+    "王辉"
+  ],
+  "enabled": false
+}

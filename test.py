@@ -13,7 +13,6 @@ import openai
 import requests
 from dotenv import load_dotenv
 from wxauto4 import WeChat
-from wxauto4.msgs import FriendMessage, FriendTextMessage
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,15 +26,18 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "deepseek-chat")
 SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT", "你是一个易怒的微信助手，请简短回答。")
-DEEPSEEK_API_URL = os.getenv("DEEPSEEK_API_URL", "https://api.deepseek.com/v1/chat/completions")
+POLL_INTERVAL = float(os.getenv("POLL_INTERVAL", "2"))
 
 client = None
 if OPENAI_API_KEY:
     client = openai.OpenAI(api_key=OPENAI_API_KEY, base_url=OPENAI_BASE_URL or None)
 
+# 消息去重缓存
+message_cache = {}
+
 
 def get_ai_response(prompt: str) -> str:
-    """优先用 openai SDK，失败后回退到 requests 直连 DeepSeek API。"""
+    """获取 AI 回复"""
     if not prompt:
         return ""
 
@@ -73,7 +75,12 @@ def get_ai_response(prompt: str) -> str:
         "temperature": 0.5,
     }
     try:
-        response = requests.post(DEEPSEEK_API_URL, headers=headers, json=data, timeout=20)
+        response = requests.post(
+            "https://api.deepseek.com/v1/chat/completions",
+            headers=headers,
+            json=data,
+            timeout=20
+        )
         if response.status_code == 200:
             response_data = response.json()
             reply = response_data["choices"][0]["message"].get("content", "")
@@ -83,34 +90,70 @@ def get_ai_response(prompt: str) -> str:
         return f"【AI大脑断线】: {e}"
 
 
-def on_message(msg, chat) -> None:
-    """消息回调函数 - 当监听的联系人发送消息时自动触发"""
-    if not isinstance(msg, FriendMessage):
-        return
-    
-    if not isinstance(msg, FriendTextMessage):
-        logger.info(f"收到【{chat.who}】的非文本消息，类型: {msg.type}")
-        return
-    
-    content = msg.content.strip()
-    if not content:
-        return
-    
-    logger.info(f"收到【{chat.who}】: {content}")
-    
-    reply = get_ai_response(content)
-    if not reply:
-        return
-    
+def process_friend_messages(wx: WeChat, friend_name: str) -> None:
+    """处理某个好友的消息"""
     try:
-        chat.SendMsg(reply)
-        logger.info(f"已回复【{chat.who}】: {reply}")
+        # 切换到聊天窗口
+        wx.ChatWith(friend_name)
+        time.sleep(0.2)  # 等待窗口切换
+        
+        # 获取所有消息
+        msgs = wx.GetAllMessage()
+        if not msgs:
+            return
+        
+        # 倒序遍历，找最新的入站消息
+        for msg in reversed(msgs):
+            # 跳过没有 content 的消息
+            if not hasattr(msg, 'content') or not msg.content:
+                continue
+            
+            # 检查是否是自己的消息
+            sender = getattr(msg, 'sender', '')
+            attr = getattr(msg, 'attr', '')
+            direction = getattr(msg, 'direction', '')
+            
+            # 判断是否是来自好友的消息（不是自己发送的）
+            is_self = (attr == 'self' or sender == '我' or direction == 'right')
+            if is_self:
+                continue
+            
+            # 获取消息 hash 用于去重
+            msg_hash = getattr(msg, 'hash', None)
+            if not msg_hash:
+                msg_hash = f"{friend_name}:{msg.content}"
+            
+            # 检查是否已处理过此消息
+            if msg_hash == message_cache.get(friend_name):
+                continue
+            
+            # 记录此消息的 hash
+            message_cache[friend_name] = msg_hash
+            
+            content = msg.content.strip()
+            logger.info(f"收到【{friend_name}】: {content}")
+            
+            # 调用 AI 获取回复
+            reply = get_ai_response(content)
+            if not reply:
+                continue
+            
+            # 发送回复
+            try:
+                wx.SendMsg(reply, friend_name)
+                logger.info(f"已回复【{friend_name}】: {reply}")
+            except Exception as e:
+                logger.error(f"发送消息失败【{friend_name}】: {e}")
+            
+            # 只处理最新的一条消息，然后继续轮询
+            break
+                
     except Exception as e:
-        logger.error(f"发送失败【{chat.who}】: {e}")
+        logger.error(f"处理【{friend_name}】消息失败: {e}")
 
 
 def main() -> None:
-    """主程序 - 使用事件监听模式"""
+    """主程序 - 使用轮询模式兼容 wxauto4 开源版本"""
     wx = WeChat()
     
     listen_list = [
@@ -120,27 +163,31 @@ def main() -> None:
     ]
     
     logger.info(f"准备监听 {len(listen_list)} 个联系人")
+    logger.info(f"轮询间隔: {POLL_INTERVAL}s")
     
+    # 初始化消息缓存
     for friend_name in listen_list:
-        try:
-            wx.AddListenChat(nickname=friend_name, callback=on_message)
-            logger.info(f"已添加监听【{friend_name}】")
-        except Exception as e:
-            logger.error(f"添加监听失败【{friend_name}】: {e}")
+        message_cache[friend_name] = None
     
-    logger.info("机器人已启动，监听中...")
+    logger.info("机器人已启动，轮询中...")
     
     try:
-        # 尝试使用 KeepRunning，如果不可用则使用轮询
-        try:
-            wx.KeepRunning()
-        except (AttributeError, Exception) as keep_error:
-            logger.warning(f"KeepRunning 不可用，使用轮询模式: {keep_error}")
-            while True:
-                time.sleep(1)  # 保持进程运行
+        # 轮询消息检查
+        while True:
+            try:
+                for friend_name in listen_list:
+                    process_friend_messages(wx, friend_name)
+                
+                # 等待下一个轮询周期
+                time.sleep(POLL_INTERVAL)
+                
+            except Exception as e:
+                logger.error(f"轮询循环异常: {e}")
+                time.sleep(POLL_INTERVAL)
     except KeyboardInterrupt:
         logger.info("机器人已停止")
 
 
 if __name__ == "__main__":
     main()
+

@@ -1,16 +1,15 @@
-"""核心机器人逻辑"""
+"""核心机器人逻辑 - 针对 wxauto4（开源版本）"""
 import os
 import logging
 import time
-from typing import Dict, Callable, Any
-from threading import Thread
+from typing import Dict, Callable, Any, Optional
+from threading import Thread, Event
 
 import openai
 import requests
 from wxauto4 import WeChat
-from wxauto4.msgs import FriendMessage, FriendTextMessage
 
-# Windows COM 初始化（解决多线程问题）
+# Windows COM 初始化（必需）
 try:
     import pythoncom
     HAS_PYTHONCOM = True
@@ -21,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class AutoReplyBot:
-    """微信自动回复机器人"""
+    """微信自动回复机器人 - wxauto4 开源版本"""
     
     def __init__(self, config: Dict[str, Any]):
         """初始化机器人
@@ -39,6 +38,13 @@ class AutoReplyBot:
         self.client = None
         self.running = False
         self.status_callback = None
+        self.stop_event = Event()
+        
+        # 消息去重缓存：{friend_name: last_message_hash}
+        self.message_cache = {}
+        
+        # 轮询间隔（秒）
+        self.poll_interval = float(os.getenv("POLL_INTERVAL", "2"))
         
         self._init_ai_client()
     
@@ -110,44 +116,81 @@ class AutoReplyBot:
         except Exception as e:
             return f"【AI 大脑断线】{str(e)}"
     
-    def _on_message(self, msg, chat):
-        """消息回调函数"""
-        if not isinstance(msg, FriendMessage):
-            return
-        
-        if not isinstance(msg, FriendTextMessage):
-            logger.info(f"收到【{chat.who}】的非文本消息")
-            return
-        
-        content = msg.content.strip()
-        if not content:
-            return
-        
-        logger.info(f"收到【{chat.who}】: {content}")
-        self._update_status(f"收到【{chat.who}】的消息")
-        
-        reply = self._get_ai_response(content)
-        if not reply:
-            return
-        
-        try:
-            chat.SendMsg(reply)
-            logger.info(f"已回复【{chat.who}】: {reply}")
-            self._update_status(f"已回复【{chat.who}】")
-        except Exception as e:
-            logger.error(f"发送消息失败: {e}")
-            self._update_status(f"发送失败: {str(e)}")
-    
     def _update_status(self, message: str):
         """更新状态"""
         if self.status_callback:
             self.status_callback(message)
     
+    def _process_friend_messages(self, friend_name: str):
+        """处理某个好友的消息"""
+        try:
+            # 切换到聊天窗口
+            self.wx.ChatWith(friend_name)
+            time.sleep(0.2)  # 等待窗口切换
+            
+            # 获取所有消息
+            msgs = self.wx.GetAllMessage()
+            if not msgs:
+                return
+            
+            # 倒序遍历，找最新的入站消息
+            for msg in reversed(msgs):
+                # 跳过系统消息和时间消息
+                if not hasattr(msg, 'content') or not msg.content:
+                    continue
+                
+                # 检查是否是自己的消息
+                sender = getattr(msg, 'sender', '')
+                attr = getattr(msg, 'attr', '')
+                direction = getattr(msg, 'direction', '')
+                
+                # 判断是否是来自好友的消息（不是自己发送的）
+                is_self = (attr == 'self' or sender == '我' or direction == 'right')
+                if is_self:
+                    continue
+                
+                # 获取消息 hash 用于去重
+                msg_hash = getattr(msg, 'hash', None)
+                if not msg_hash:
+                    msg_hash = f"{friend_name}:{msg.content}"
+                
+                # 检查是否已处理过此消息
+                if msg_hash == self.message_cache.get(friend_name):
+                    continue
+                
+                # 记录此消息的 hash
+                self.message_cache[friend_name] = msg_hash
+                
+                content = msg.content.strip()
+                logger.info(f"收到【{friend_name}】: {content}")
+                self._update_status(f"收到【{friend_name}】的消息")
+                
+                # 调用 AI 获取回复
+                reply = self._get_ai_response(content)
+                if not reply:
+                    continue
+                
+                # 发送回复
+                try:
+                    self.wx.SendMsg(reply, friend_name)
+                    logger.info(f"已回复【{friend_name}】: {reply}")
+                    self._update_status(f"已回复【{friend_name}】")
+                except Exception as e:
+                    logger.error(f"发送消息失败【{friend_name}】: {e}")
+                    self._update_status(f"发送失败: {str(e)}")
+                
+                # 只处理最新的一条消息，然后继续轮询
+                break
+                
+        except Exception as e:
+            logger.error(f"处理【{friend_name}】消息失败: {e}")
+    
     def start(self, status_callback: Callable[[str], None] = None):
         """启动机器人"""
         self.status_callback = status_callback
+        self.stop_event.clear()
         
-        # Windows COM 初始化（在多线程中必需）
+        # Windows COM 初始化
         if HAS_PYTHONCOM:
             try:
                 pythoncom.CoInitialize()
@@ -164,28 +207,25 @@ class AutoReplyBot:
             self._update_status(f"准备监听 {len(listen_list)} 个联系人...")
             
             for friend_name in listen_list:
+                self.message_cache[friend_name] = None
+            
+            logger.info(f"机器人已启动，轮询间隔: {self.poll_interval}s")
+            self._update_status(f"机器人已启动，轮询中...")
+            
+            # 轮询消息检查
+            while self.running and not self.stop_event.is_set():
                 try:
-                    self.wx.AddListenChat(nickname=friend_name, callback=self._on_message)
-                    self._update_status(f"已添加监听: {friend_name}")
-                    logger.info(f"已添加监听【{friend_name}】")
+                    for friend_name in listen_list:
+                        if not self.running:
+                            break
+                        self._process_friend_messages(friend_name)
+                    
+                    # 等待下一个轮询周期
+                    time.sleep(self.poll_interval)
+                    
                 except Exception as e:
-                    logger.error(f"添加监听失败【{friend_name}】: {e}")
-                    self._update_status(f"添加监听失败: {friend_name}")
-            
-            self._update_status("机器人已启动，等待消息...")
-            logger.info("机器人已启动，监听中...")
-            
-            # 使用 KeepRunning() 或持续轮询来保持程序运行
-            try:
-                self.wx.KeepRunning()
-            except (AttributeError, Exception) as e:
-                # 如果 KeepRunning 不可用或出错，使用持续轮询
-                logger.warning(f"KeepRunning 不可用，使用轮询模式: {e}")
-                while self.running:
-                    try:
-                        time.sleep(1)  # 每秒检查一次
-                    except KeyboardInterrupt:
-                        break
+                    logger.error(f"轮询循环异常: {e}")
+                    time.sleep(self.poll_interval)
             
         except KeyboardInterrupt:
             self.stop()
@@ -210,5 +250,7 @@ class AutoReplyBot:
     def stop(self):
         """停止机器人"""
         self.running = False
+        self.stop_event.set()
         self._update_status("机器人已停止")
         logger.info("机器人已停止")
+
