@@ -1,0 +1,8 @@
+.env
+.claude/
+.vscode/
+wxauto_logs/
+自动回复/
+__pycache__/
+*.pyc
+*.log
