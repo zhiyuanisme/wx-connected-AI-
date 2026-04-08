@@ -40,7 +40,7 @@ class AutoReplyBot:
         self.status_callback = None
         self.stop_event = Event()
         
-        # 消息去重缓存：{friend_name: last_message_hash}
+        # 消息去重缓存：{friend_name: set(message_hashes)}
         self.message_cache = {}
         
         # 轮询间隔（秒）
@@ -130,14 +130,25 @@ class AutoReplyBot:
             True 表示来自好友，False 表示自己发送的
         """
         try:
-            # 方法1: 检查 sender 字段
-            sender = getattr(msg, 'sender', '')
+            # 首先检查内容
+            content = getattr(msg, 'content', '')
+            if not content:
+                return False
             
-            # 如果 sender 就是好友名称，说明是来自好友
-            # 如果 sender 是自己，说明是自己发的
+            # 过滤掉特殊消息：纯数字、特殊符号等（通常是系统消息或时间戳）
+            if content.strip().isdigit() or len(content.strip()) <= 2:
+                # 纯数字或超短内容通常不是真实用户消息
+                # 但要保留短消息如 "hi", "ok" 等
+                if content.strip().isdigit():
+                    return False
+            
+            # 方法1: 检查 sender 字段（最准确）
+            sender = getattr(msg, 'sender', '')
             if sender:
+                # 如果 sender 就是好友名称，说明是来自好友
                 if sender == friend_name:
                     return True
+                # 如果 sender 是自己，说明是自己发的
                 if self.self_nickname and sender == self.self_nickname:
                     return False
             
@@ -146,6 +157,9 @@ class AutoReplyBot:
             attr = getattr(msg, 'attr', '')
             if attr == 'self':
                 return False
+            if attr and attr != 'self':
+                # 有明确的非self标记，认为是来自好友
+                return True
             
             # 方法3: 通过 direction 字段判断
             # 'right' 表示右对齐（自己），'left' 表示左对齐（对方）
@@ -180,29 +194,45 @@ class AutoReplyBot:
             if not msgs:
                 return
             
+            # 初始化此好友的消息缓存集合（如果不存在）
+            if friend_name not in self.message_cache:
+                self.message_cache[friend_name] = set()
+            
             # 倒序遍历，找最新的入站消息
             for msg in reversed(msgs):
                 # 跳过没有 content 的消息
                 if not hasattr(msg, 'content') or not msg.content:
                     continue
                 
+                content = msg.content.strip()
+                
+                # 跳过空内容
+                if not content:
+                    continue
+                
                 # 检查是否是来自好友的消息（使用改进的判断方法）
                 if not self._is_message_from_friend(msg, friend_name):
                     continue
                 
-                # 获取消息 hash 用于去重
-                msg_hash = getattr(msg, 'hash', None)
-                if not msg_hash:
-                    msg_hash = f"{friend_name}:{msg.content}"
+                # 生成消息唯一标识，结合内容和先发时间
+                msg_time = getattr(msg, 'create_time', '')
+                msg_id = getattr(msg, 'id', '')
+                
+                # 使用多个属性生成hash，提高可靠性
+                if msg_id:
+                    msg_hash = f"{friend_name}:{msg_id}"
+                elif msg_time:
+                    msg_hash = f"{friend_name}:{content}:{msg_time}"
+                else:
+                    msg_hash = f"{friend_name}:{content}"
                 
                 # 检查是否已处理过此消息
-                if msg_hash == self.message_cache.get(friend_name):
+                if msg_hash in self.message_cache[friend_name]:
                     continue
                 
-                # 记录此消息的 hash
-                self.message_cache[friend_name] = msg_hash
+                # 记录此消息的 hash（添加到集合，而非替换）
+                self.message_cache[friend_name].add(msg_hash)
                 
-                content = msg.content.strip()
                 logger.info(f"收到【{friend_name}】: {content}")
                 self._update_status(f"收到【{friend_name}】的消息")
                 
@@ -256,8 +286,9 @@ class AutoReplyBot:
             listen_list = self.config.get('listen_friends', [])
             self._update_status(f"准备监听 {len(listen_list)} 个联系人...")
             
+            # 初始化消息缓存（使用集合存储所有已处理的消息）
             for friend_name in listen_list:
-                self.message_cache[friend_name] = None
+                self.message_cache[friend_name] = set()
             
             logger.info(f"机器人已启动，轮询间隔: {self.poll_interval}s")
             self._update_status(f"机器人已启动，轮询中...")
