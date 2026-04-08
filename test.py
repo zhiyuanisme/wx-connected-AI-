@@ -2,6 +2,13 @@ import os
 import logging
 import time
 
+# Windows COM 初始化（必需）
+try:
+    import pythoncom
+    pythoncom.CoInitialize()
+except ImportError:
+    pass
+
 import openai
 import requests
 from dotenv import load_dotenv

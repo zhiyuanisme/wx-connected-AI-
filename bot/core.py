@@ -10,6 +10,13 @@ import requests
 from wxauto4 import WeChat
 from wxauto4.msgs import FriendMessage, FriendTextMessage
 
+# Windows COM 初始化（解决多线程问题）
+try:
+    import pythoncom
+    HAS_PYTHONCOM = True
+except ImportError:
+    HAS_PYTHONCOM = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -140,6 +147,14 @@ class AutoReplyBot:
         """启动机器人"""
         self.status_callback = status_callback
         
+        # Windows COM 初始化（在多线程中必需）
+        if HAS_PYTHONCOM:
+            try:
+                pythoncom.CoInitialize()
+                logger.info("COM 已初始化")
+            except Exception as e:
+                logger.warning(f"COM 初始化警告: {e}")
+        
         try:
             self._update_status("正在初始化 WeChat...")
             self.wx = WeChat()
@@ -178,6 +193,13 @@ class AutoReplyBot:
             logger.error(f"启动失败: {e}")
             self._update_status(f"启动失败: {str(e)}")
             self.running = False
+        finally:
+            # 清理 COM 资源
+            if HAS_PYTHONCOM:
+                try:
+                    pythoncom.CoUninitialize()
+                except Exception:
+                    pass
     
     def start_async(self, status_callback: Callable[[str], None] = None):
         """在后台线程启动机器人"""

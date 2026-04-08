@@ -5,6 +5,13 @@ from tkinter import ttk, messagebox, scrolledtext
 from pathlib import Path
 import sys
 
+# Windows COM 初始化
+try:
+    import pythoncom
+    pythoncom.CoInitialize()
+except ImportError:
+    pass
+
 # 添加父目录到 Python 路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
