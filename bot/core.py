@@ -162,6 +162,11 @@ class AutoReplyBot:
             logger.warning(f"判断消息来源时出错: {e}")
             return False
     
+    def _update_status(self, message: str):
+        """更新状态"""
+        if self.status_callback:
+            self.status_callback(message)
+    
     
     def _process_friend_messages(self, friend_name: str):
         """处理某个好友的消息"""
