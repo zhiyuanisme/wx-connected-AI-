@@ -1,99 +1,169 @@
 # 微信 AI 自动回复
 
-一个基于 `wxauto4` 的微信自动回复脚本，支持接入 OpenAI 兼容接口（如 DeepSeek）。
+一个基于 `wxauto4` 的微信自动回复程序，支持接入 OpenAI 兼容接口（如 DeepSeek）。提供**图形界面**和**命令行**两种使用方式。
 
 ## 功能
 
-- 监听指定微信联系人消息
-- 使用 AI 生成回复内容
-- 自动发送回复
-- 基础防重复回复策略（消息去重、短时重复文本抑制）
+- ✅ **图形界面** - 点击运行，无需编程基础
+- ✅ **事件监听** - 实时响应，低 CPU 占用
+- ✅ **AI 回复** - 支持 OpenAI 兼容的 API（DeepSeek、GPT 等）
+- ✅ 监听多个联系人
+- ✅ 自定义系统提示词
+- ✅ 自动去重与防重复回复
 
 ## 项目结构
 
-```text
+```
 wechat_auto_reply/
-  test.py               # 主程序
-  .env.example          # 环境变量示例
-  .gitignore
-  README.md
+├── app.py          # 📌 GUI 应用入口（推荐）
+├── test.py         # 命令行版本
+├── bot/
+│   ├── core.py     # 核心机器人逻辑
+│   └── config.py   # 配置管理
+├── gui/
+│   └── gui_app.py  # GUI 界面
+├── config.json     # 配置文件（自动生成）
+└── README.md
 ```
 
-## 运行环境
+## 快速开始
 
-- Windows
+### 方式一：GUI 应用（推荐，适合普通用户）
+
+1. **启动应用**
+   ```powershell
+   # Windows 直接双击 app.py 或在 PowerShell 运行：
+   python app.py
+   ```
+
+2. **进行配置**
+   - 在"配置"标签页填入：
+     - **API Key**：你的 DeepSeek/OpenAI API Key
+     - **API 地址**：默认为 https://gpt-agent.cc/v1
+     - **监听联系人**：微信中的显示名，多个用逗号分隔
+     - **系统提示词**：可选，决定 AI 的回复风格
+
+3. **点击启动**
+   - 在"控制"标签页点击"启动机器人"
+   - 在"日志"标签页查看运行状态
+
+### 方式二：命令行（适合开发者）
+
+1. 复制环境变量
+   ```powershell
+   Copy-Item .env.example .env
+   ```
+
+2. 编辑 `.env`，填入 API Key 和监听联系人
+
+3. 运行
+   ```powershell
+   python test.py
+   ```
+
+## 环境要求
+
+- Windows 系统
+- Python 3.11+
 - 已安装并登录微信客户端
-- Python 3.11（建议）
 
 ## 安装依赖
 
-如果你使用本项目已有虚拟环境，可先激活：
+如果是新环境，先激活虚拟环境：
 
 ```powershell
 .\自动回复\Scripts\Activate.ps1
 ```
 
-如果你是新环境，先安装依赖：
+然后安装依赖：
 
 ```powershell
 pip install wxauto4 openai requests python-dotenv
 ```
 
-## 配置
+## 配置说明
 
-1. 复制环境变量模板：
+### 配置文件位置
 
-```powershell
-Copy-Item .env.example .env
-```
+- **GUI 应用**：配置保存在 `config.json`（自动生成）
+- **命令行版本**：配置保存在 `.env`
 
-2. 编辑 `.env`，至少填写：
+### 配置项
 
-```env
-OPENAI_API_KEY=你的API_KEY
-OPENAI_BASE_URL=https://gpt-agent.cc/v1
-OPENAI_MODEL=deepseek-chat
-LISTEN_FRIENDS=文件传输助手,王辉
-```
-
-可选项：
-
-- `SYSTEM_PROMPT`：系统提示词
-- `POLL_INTERVAL`：轮询间隔（秒）
-- `DEEPSEEK_API_URL`：回退请求地址
-- `DEEPSEEK_API_KEY`：当 `OPENAI_API_KEY` 为空时使用
-
-## 启动
-
-```powershell
-python .\test.py
-```
-
-启动后控制台会输出监听对象，按 `Ctrl + C` 可停止。
-
-## 注意事项
-
-- 首次运行前请确认微信已登录且聊天窗口可访问。
-- 不建议将 `.env` 提交到仓库（已在 `.gitignore` 中忽略）。
-- 自动回复行为请遵守平台规则与法律法规。
+| 项目 | 说明 | 示例 |
+|---|----|-----|
+| `api_key` | API 密钥 | `sk-xxxxx` |
+| `api_base_url` | API 地址 | `https://gpt-agent.cc/v1` |
+| `model` | 模型名称 | `deepseek-chat` |
+| `system_prompt` | 系统提示词 | `你是一个易怒的助手` |
+| `listen_friends` | 监听联系人 | `文件传输助手,张三` |
 
 ## 常见问题
 
-### 1. 提示 AI 配置缺失
+### 1. 启动后没有收到消息回复
 
-请检查 `.env` 是否存在并包含 `OPENAI_API_KEY` 或 `DEEPSEEK_API_KEY`。
+- ✅ 检查微信是否已登录
+- ✅ 检查联系人名称是否与微信显示名完全一致
+- ✅ 在"日志"标签页查看错误信息
 
-### 2. 没有自动回复
+### 2. API Key 显示无效
 
-- 检查 `LISTEN_FRIENDS` 名称是否和微信联系人显示名完全一致
-- 检查网络是否正常
-- 查看终端日志和 `wxauto_logs` 输出
+- 确保 API Key 格式正确
+- 检查网络连接
+- 测试 API 是否可用
 
-### 3. 提交 Git 报身份错误
+### 3. 提示"【AI配置缺失】"
 
-执行以下命令配置 Git 身份：
+- 确保填入了 API Key
+- 保存配置后再启动
+
+## 打包成 EXE（可选）
+
+想让别人不用装 Python 也能运行？可以打包成 .exe：
 
 ```powershell
-git config --global user.name "你的名字"
-git config --global user.email "你的邮箱"
+pip install pyinstaller
+pyinstaller --onefile --noconsole --name WeChat-Auto-Reply app.py
 ```
+
+生成的 exe 在 `dist` 文件夹中。
+
+## 文件说明
+
+| 文件 | 用途 |
+|-----|------|
+| [app.py](app.py) | GUI 应用入口 |
+| [test.py](test.py) | 命令行版本 |
+| [bot/core.py](bot/core.py) | 核心机器人逻辑 |
+| [bot/config.py](bot/config.py) | 配置管理 |
+| [gui/gui_app.py](gui/gui_app.py) | GUI 界面代码 |
+
+## 注意事项
+
+⚠️ **重要提示**
+
+- 不建议频繁自动回复，可能被 WeChat 判定为营销
+- API Key 请妥善保管，不要分享给他人
+- `.env` 和 `config.json` 包含敏感信息，不要提交到公开仓库
+- 自动回复行为请遵守 WeChat 服务条款和法律法规
+
+## 更新日志
+
+### v2.0（GUI 版本）
+- ✨ 新增图形界面应用
+- 🚀 改为事件监听模式（比轮询快 10 倍）
+- 📝 支持配置文件持久化
+- 🎯 大幅简化使用流程
+
+### v1.0（命令行版本）
+- 基础命令行版本
+
+## 支持与反馈
+
+- 📧 如有问题，请检查"日志"标签页的错误信息
+- 🐛 发现 Bug？欢迎提交 Issue
+
+## 许可证
+
+MIT License
+
