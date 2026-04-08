@@ -2,6 +2,7 @@
 import os
 import logging
 import time
+import re
 from typing import Dict, Callable, Any, Optional
 from threading import Thread, Event
 
@@ -135,12 +136,23 @@ class AutoReplyBot:
             if not content:
                 return False
             
-            # 过滤掉特殊消息：纯数字、特殊符号等（通常是系统消息或时间戳）
-            if content.strip().isdigit() or len(content.strip()) <= 2:
-                # 纯数字或超短内容通常不是真实用户消息
-                # 但要保留短消息如 "hi", "ok" 等
-                if content.strip().isdigit():
-                    return False
+            content_stripped = content.strip()
+            
+            # 过滤掉系统消息和特殊格式
+            # 1. 纯数字（系统消息）
+            if content_stripped.isdigit():
+                logger.debug(f"过滤纯数字消息: {content_stripped}")
+                return False
+            
+            # 2. 时间戳格式 HH:MM 或 HH:MM:SS
+            if re.match(r'^\d{1,2}:\d{2}(:\d{2})?$', content_stripped):
+                logger.debug(f"过滤时间戳消息: {content_stripped}")
+                return False
+            
+            # 3. 纯符号或特殊字符（通常是系统消息）
+            if all(c in '=-_*|[](){}.,!?；：' for c in content_stripped):
+                logger.debug(f"过滤纯符号消息: {content_stripped}")
+                return False
             
             # 方法1: 检查 sender 字段（最准确）
             sender = getattr(msg, 'sender', '')
@@ -204,11 +216,17 @@ class AutoReplyBot:
                 if not hasattr(msg, 'content') or not msg.content:
                     continue
                 
-                content = msg.content.strip()
+                content = getattr(msg, 'content', '').strip()
                 
                 # 跳过空内容
                 if not content:
                     continue
+                
+                # 记录调试信息：所有被看到的消息
+                sender = getattr(msg, 'sender', '')
+                attr = getattr(msg, 'attr', '')
+                direction = getattr(msg, 'direction', '')
+                logger.debug(f"【{friend_name}】消息属性 - content:{content} | sender:{sender} | attr:{attr} | direction:{direction}")
                 
                 # 检查是否是来自好友的消息（使用改进的判断方法）
                 if not self._is_message_from_friend(msg, friend_name):

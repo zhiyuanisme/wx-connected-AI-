@@ -1,6 +1,7 @@
 import os
 import logging
 import time
+import re
 
 # Windows COM 初始化（必需）
 try:
@@ -55,8 +56,22 @@ def is_message_from_friend(msg, friend_name: str) -> bool:
         if not content:
             return False
         
-        # 过滤掉纯数字内容（通常是系统消息或时间戳）
-        if content.strip().isdigit():
+        content_stripped = content.strip()
+        
+        # 过滤掉系统消息和特殊格式
+        # 1. 纯数字（系统消息）
+        if content_stripped.isdigit():
+            logger.debug(f"过滤纯数字消息: {content_stripped}")
+            return False
+        
+        # 2. 时间戳格式 HH:MM 或 HH:MM:SS
+        if re.match(r'^\d{1,2}:\d{2}(:\d{2})?$', content_stripped):
+            logger.debug(f"过滤时间戳消息: {content_stripped}")
+            return False
+        
+        # 3. 纯符号或特殊字符（通常是系统消息）
+        if all(c in '=-_*|[](){}.,!?；：' for c in content_stripped):
+            logger.debug(f"过滤纯符号消息: {content_stripped}")
             return False
         
         # 方法1: 检查 sender 字段（最准确）
@@ -174,6 +189,12 @@ def process_friend_messages(wx: WeChat, friend_name: str) -> None:
             # 跳过空内容
             if not content:
                 continue
+            
+            # 记录调试信息：所有被看到的消息
+            sender = getattr(msg, 'sender', '')
+            attr = getattr(msg, 'attr', '')
+            direction = getattr(msg, 'direction', '')
+            logger.debug(f"【{friend_name}】消息属性 - content:{content} | sender:{sender} | attr:{attr} | direction:{direction}")
             
             # 检查是否是来自好友的消息（使用改进的判断方法）
             if not is_message_from_friend(msg, friend_name):
