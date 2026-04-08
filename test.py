@@ -1,5 +1,6 @@
 import os
 import logging
+import time
 
 import openai
 import requests
@@ -120,10 +121,16 @@ def main() -> None:
         except Exception as e:
             logger.error(f"添加监听失败【{friend_name}】: {e}")
     
-    logger.info("机器人已启动，按 Ctrl+C 停止")
+    logger.info("机器人已启动，监听中...")
     
     try:
-        wx.KeepRunning()
+        # 尝试使用 KeepRunning，如果不可用则使用轮询
+        try:
+            wx.KeepRunning()
+        except (AttributeError, Exception) as keep_error:
+            logger.warning(f"KeepRunning 不可用，使用轮询模式: {keep_error}")
+            while True:
+                time.sleep(1)  # 保持进程运行
     except KeyboardInterrupt:
         logger.info("机器人已停止")
 

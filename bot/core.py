@@ -1,6 +1,7 @@
 """核心机器人逻辑"""
 import os
 import logging
+import time
 from typing import Dict, Callable, Any
 from threading import Thread
 
@@ -156,8 +157,20 @@ class AutoReplyBot:
                     logger.error(f"添加监听失败【{friend_name}】: {e}")
                     self._update_status(f"添加监听失败: {friend_name}")
             
-            self._update_status("机器人已启动")
-            self.wx.KeepRunning()
+            self._update_status("机器人已启动，等待消息...")
+            logger.info("机器人已启动，监听中...")
+            
+            # 使用 KeepRunning() 或持续轮询来保持程序运行
+            try:
+                self.wx.KeepRunning()
+            except (AttributeError, Exception) as e:
+                # 如果 KeepRunning 不可用或出错，使用持续轮询
+                logger.warning(f"KeepRunning 不可用，使用轮询模式: {e}")
+                while self.running:
+                    try:
+                        time.sleep(1)  # 每秒检查一次
+                    except KeyboardInterrupt:
+                        break
             
         except KeyboardInterrupt:
             self.stop()
